@@ -100,8 +100,22 @@ extern NSInteger const kBBpreviewControllerErrorCodeCannotLoadImage;
 - (BOOL)loadWebPageAtUrl:(NSString*)url;
 - (BOOL)loadImage:(UIImage*)image;
 - (BOOL)loadImageAtPath:(NSString*)pathToImage;
+- (BOOL)loadImageFromURL:(NSURL *)url
+                   userName:(NSString *)user
+                   password:(NSString *)password
+                       host:(NSString *)host
+                       port:(NSInteger)port
+                   protocol:(NSString *)protocol
+                      realm:(NSString *)realm;
 - (BOOL)loadMediaAtPath:(NSString*)path;
 - (BOOL)loadDocumentAtPath:(NSString*)path;
+- (BOOL)loadDocumentFromURL:(NSURL *)url
+                   userName:(NSString *)user
+                   password:(NSString *)password
+                       host:(NSString *)host
+                       port:(NSInteger)port
+                   protocol:(NSString *)protocol
+                      realm:(NSString *)realm;
 
 /**
  Loads a plain-text document at `path` into memory and displays it using a web view. The reason why this alternative

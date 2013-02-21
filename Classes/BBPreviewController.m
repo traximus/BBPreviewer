@@ -253,7 +253,7 @@ CGFloat const kBBPreviewControllerDefaultMaxZoomScale = 1.5;
     if ([self hasContent]) return NO;
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        UIImage* image = [self readImageAtPath:pathToImage];
+        UIImage* image = [self readImageAtPath:pathToImage isWebFile:NO];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (image == nil) {
                 NSError* error = [NSError errorWithDomain:kBBPreviewControllerErrorDomain
@@ -266,6 +266,42 @@ CGFloat const kBBPreviewControllerDefaultMaxZoomScale = 1.5;
         });
     });
 
+    return YES;
+}
+-(BOOL)loadImageFromURL:(NSURL *)url userName:(NSString *)user password:(NSString *)password
+                      host:(NSString *)host port:(NSInteger)port protocol:(NSString *)protocol
+                     realm:(NSString *)realm
+{
+    if ([self hasContent]) return NO;
+    
+    //首先进行授权验证
+    NSURLCredential *credential = [[NSURLCredential alloc]initWithUser:user
+                                                              password:password
+                                                           persistence:NSURLCredentialPersistenceForSession];
+    NSURLProtectionSpace *protectionSpace = [[NSURLProtectionSpace alloc]initWithHost:host
+                                                                                 port:port
+                                                                             protocol:protocol
+                                                                                realm:realm
+                                                                 authenticationMethod:NSURLAuthenticationMethodDefault];
+    [[NSURLCredentialStorage sharedCredentialStorage] setDefaultCredential:credential
+                                                        forProtectionSpace:protectionSpace];
+    
+    //然后载入image
+    NSString *filePath = [url absoluteString];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        UIImage* image = [self readImageAtPath:filePath isWebFile:YES];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (image == nil) {
+                NSError* error = [NSError errorWithDomain:kBBPreviewControllerErrorDomain
+                                                     code:kBBpreviewControllerErrorCodeCannotLoadImage
+                                                 userInfo:@{NSLocalizedDescriptionKey: @"Could not load image"}];
+                [self notifyDelegateOfContentLoadError:error];
+            } else {
+                [self loadImage:image];
+            }
+        });
+    });
+    
     return YES;
 }
 
@@ -304,6 +340,38 @@ CGFloat const kBBPreviewControllerDefaultMaxZoomScale = 1.5;
     NSURLRequest* request = [NSURLRequest requestWithURL:urlForRequest];
     [webView loadRequest:request];
 
+    return YES;
+}
+-(BOOL)loadDocumentFromURL:(NSURL *)url userName:(NSString *)user password:(NSString *)password
+                      host:(NSString *)host port:(NSInteger)port protocol:(NSString *)protocol
+                     realm:(NSString *)realm
+{
+    if ([self hasContent]) return NO;
+    
+    //首先进行授权验证
+    NSURLCredential *credential = [[NSURLCredential alloc]initWithUser:user
+                                                              password:password
+                                                           persistence:NSURLCredentialPersistenceForSession];
+    NSURLProtectionSpace *protectionSpace = [[NSURLProtectionSpace alloc]initWithHost:host
+                                                                                 port:port
+                                                                             protocol:protocol
+                                                                                realm:realm
+                                                                 authenticationMethod:NSURLAuthenticationMethodDefault];
+    [[NSURLCredentialStorage sharedCredentialStorage] setDefaultCredential:credential
+                                                        forProtectionSpace:protectionSpace];
+    
+    //然后使用webview载入文档
+    UIWebView* webView = [[UIWebView alloc] initWithFrame:[self contentView].bounds];
+    webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    webView.backgroundColor = [UIColor clearColor];
+    webView.scalesPageToFit = YES;
+    webView.delegate = self;
+    [[self contentView] addSubview:webView];
+    
+    NSString *filePath = [url absoluteString];
+    NSURLRequest* request = [NSURLRequest requestWithURL:[NSURL URLWithString:filePath]];
+    [webView loadRequest:request];
+    
     return YES;
 }
 
@@ -414,12 +482,21 @@ CGFloat const kBBPreviewControllerDefaultMaxZoomScale = 1.5;
     }
 }
 
-- (UIImage*)readImageAtPath:(NSString*)path
+- (UIImage*)readImageAtPath:(NSString*)path isWebFile:(BOOL)isWebFile
 {
 #ifdef __IMAGEIO__
-    if ([[path pathExtension] isEqualToString:@"gif"]) {
+    if ([[path pathExtension] isEqualToString:@"gif"])
+    {
         // All credit for this goes to Rob Mayoff - https://github.com/mayoff/uiimage-from-animated-gif
-        NSData* data = [NSData dataWithContentsOfFile:path];
+        NSData* data;
+        if (isWebFile==YES)
+        {
+            data = [NSData dataWithContentsOfURL:[NSURL URLWithString:path]];
+        }
+        else
+        {
+            data = [NSData dataWithContentsOfFile:path];
+        }
         CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
         size_t count = CGImageSourceGetCount(source);
         NSMutableArray* images = [NSMutableArray arrayWithCapacity:count];
@@ -442,14 +519,28 @@ CGFloat const kBBPreviewControllerDefaultMaxZoomScale = 1.5;
             duration = _animatedGifDuration;
         }
 
-        return [UIImage animatedImageWithImages:images duration:duration];
+        UIImage *imageT = [UIImage animatedImageWithImages:images duration:duration];
+        NSLog(@"imageT-Gif:%@",imageT);
+        return imageT;
     }
 #else
     #warning ImageIO not found, animated GIFs won't be supported.
     // Be sure to "#import <ImageIO/ImageIO.h>" on your precompiled prefix header and link against ImageIO.framework.
 #endif
     
-    return [UIImage imageWithContentsOfFile:path];
+    UIImage *imageT;
+    if (isWebFile==YES)
+    {
+        NSData *data = [NSData dataWithContentsOfURL:[NSURL URLWithString:path]];
+        imageT = [UIImage imageWithData:data];
+        NSLog(@"imageT-normal1:%@",imageT);
+    }
+    else
+    {
+        imageT = [UIImage imageWithContentsOfFile:path];
+        NSLog(@"imageT-normal2:%@",imageT);
+    }
+    return imageT;
 }
 
 - (NSData*)readUpToBytes:(NSUInteger)length fromFileAtPath:(NSString*)path
@@ -543,7 +634,8 @@ CGFloat const kBBPreviewControllerDefaultMaxZoomScale = 1.5;
     MPMoviePlayerController* moviePlayer = [notification object];
     [self unregisterMoviePlayerNotificationHandlers:moviePlayer];
 
-    NSInteger reason = [[notification userInfo] integerForKey:MPMoviePlayerPlaybackDidFinishReasonUserInfoKey];
+    NSInteger reason = [(NSNumber*)[[notification userInfo]
+                                    objectForKey:MPMoviePlayerPlaybackDidFinishReasonUserInfoKey]integerValue ];
     if (reason == MPMovieFinishReasonPlaybackError) {
         NSError* error = [NSError errorWithDomain:@"com.biasedbit" code:kBBpreviewControllerErrorCodeCannotLoadMovie
                                          userInfo:@{NSLocalizedDescriptionKey: @"Could not load movie"}];
